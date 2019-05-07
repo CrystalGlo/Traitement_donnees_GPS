@@ -1,0 +1,323 @@
+#!/bin/bash
+#
+#HOUIMLI SAFA 		
+# 
+# Initialisation des valeurs booleennes
+OPT_F="FAUX"
+OPT_P="FAUX"
+OPT_C="FAUX"
+C_TIME="FAUX"
+C_DISTANCE="FAUX"
+C_SPEED="FAUX"
+OPT_E="FAUX"
+OPT_A="FAUX"
+FICHIERGPX="FAUX"
+FICHIERBDD="FAUX"
+
+# Boucle les options et les traites selon le cas 
+while getopts f:p:c:ea OPT
+do
+    case "$OPT" in
+
+	# Option d'ajout de fichier (avec le nom du fichier en argument)
+	f) OPT_F="VRAI"
+	   FICHIER="$OPTARG"
+	   if [ -f "$FICHIER" ]; then
+	       # Verifie si c'est un fichier de type GPX ou BDD
+	       VALIDATIONGPX=$(gawk -f validation_gpx.nawk "$FICHIER")
+	       VALIDATIONBDD=$(gawk -f validation_bdd.nawk "$FICHIER")
+	       if [[ $VALIDATIONGPX == *" valide"* ]]; then
+		   FICHIERGPX="VRAI" 
+		   FICHIER_GPX=$FICHIER
+	       elif [ $VALIDATIONBDD == "VALIDE" ] ; then
+		   FICHIERBDD="VRAI"
+		   FICHIER_BDD=$FICHIER
+	       else
+		   echo "ERREUR: Le fichier n'est pas un fichier GPX ou une base de donnee valide"
+		   exit 2
+	       fi
+	   else
+	       echo "ERREUR: Le fichier $FICHIER n'existe pas."
+	       exit 1
+	   fi
+	   ;;
+
+	# Option de definition d'une plage de positions pour les calculs (avec les position 1 et 2 en argument)
+	p) POSITIONS="$OPTARG"
+	   # Separe les positions
+	   POS1=${POSITIONS%:*}
+	   POS2=${POSITIONS#*:}
+	   # Valide le format des positions
+	   if [[ $POS1 =~ ^[0-9]+$ ]] && [[ $POS2 =~ ^[0-9]+$ ]] && [[ $POSITIONS =~ :{1} ]]; then
+	       # Si la position #2 est plus elevee que la #1, inverse les positions
+	       if [ $POS1 -gt $POS2 ]; then
+		   POSTEMP=$POS1
+		   POS1=$POS2
+		   POS2=$POSTEMP
+	       fi
+               # Si la position1 = position 2 alors afficher message d'erreur, aucun calcul ne sera fait
+               if [ $POS1 == $POS2 ] || [ $POS1 == 0 ] || [ $POS2 == 0 ]
+	       then
+		   echo "Erreur: la premiere position ne doit pas etre egale a la deuxieme et la position 0 n'existe pas"
+		   exit 8
+	       fi
+	       OPT_P="VRAI"
+	   # Sinon affiche le message d'erreur
+	   else
+	       echo "ERREUR: La position dois respecter ce format: 'NOMBRE_ENTIER:NOMBRE_ENTIER'"
+	       exit 3
+	   fi
+	   ;;
+
+	# Option de calcul (avec le type de calcul en argument)
+	c) TYPECALCUL="$OPTARG"
+	   OPT_C="VRAI"
+	   # Verifie et valide le type de calcule
+	   if [ $TYPECALCUL == "time" ]; then
+	       C_TIME="VRAI"
+	   elif [ $TYPECALCUL == "distance" ]; then
+	       C_DISTANCE="VRAI"
+	   elif [ $TYPECALCUL == "speed" ]; then
+	       C_SPEED="VRAI"
+	   else
+	       echo "ERREUR: l'option C doit etre suivi des arguments time, distance ou speed."
+	       exit 4
+	   fi
+	   ;;
+
+	# Option d'affichage de l'elevation
+	e) OPT_E="VRAI"
+	   ;;
+	
+	# Option d'affichage des coordonnees
+	a) OPT_A="VRAI"
+	   ;;
+
+	# Entree non-valide ou erronnee
+	?) echo "Option(s) invalide(s)"
+	   echo "Forme de la commande : calculeGPX [-f nomfich] [-p pos1:pos2] [-c time|distance|speed] [-e] [-a]"
+	   exit 5
+	   ;;
+      esac
+done
+
+# Verifie l'utilisation de la commande -f
+if [ $OPT_F == "FAUX" ]; then
+    cat << FIN
+-----ERREUR-----
+L'option [-f NOMFICHIER] est obligatoire pour utiliser ce programme.
+
+Si le fichier utilise est un fichier de type GPX; les autres options
+ne seront pas considere et un fichier BDD sera cree.
+
+Si le fichier est un fichier BDD; il faut utiliser au minimum une
+option parmis -a -e et -c
+
+"Forme de la commande : calculeGPX [-f nomfich] [-p pos1:pos2] [-c time|distance|speed] [-e] [-a]"
+
+FIN
+    exit 6
+fi
+
+# Si le fichier est un fichier gpx, annule les autres options et cree la base de donnees.
+if [ $FICHIERGPX == "VRAI" ]; then
+    OPT_P="FAUX"
+    OPT_C="FAUX"
+    OPT_E="FAUX"
+    OPT_A="FAUX"
+    gawk -v FENTREE=${FICHIER_GPX} -f "creation_bdd.nawk" "$FICHIER_GPX"
+fi
+
+# Si le fichier est un fichier base de donnee, verifie que la combinaison d'option est adequate
+if [ $FICHIERBDD == "VRAI" ] && [ $OPT_C == "FAUX" ] && [ $OPT_E == "FAUX" ] && [ $OPT_A == "FAUX" ]; then
+    echo ""
+    echo "Les fichiers de type base de donnne doivent etre accompagnee d'une des options suivantes :"
+    echo "-a, -e ou -c"
+    echo ""
+    exit 7
+fi
+
+# Si le fichier est un fichier base de donnee valide, identifie le nombre de points
+if [ $FICHIERBDD == "VRAI" ]
+then
+    nbr_lignes=$(wc -l < $FICHIER_BDD)
+    nbr_points=$(expr $nbr_lignes - 1)
+fi
+
+# Si l'option -p n'existe pas dans la commande alors le calcul se fait pour tous les points
+if [ $OPT_P == "FAUX" ]
+then
+      POS1=1; POS2=$nbr_points
+fi
+
+# Si l'option est activee, verifie que les points demande sont biens disponible dans le fichier BDD
+if [ $OPT_P == "VRAI" ] && [ $POS2 -gt $nbr_points ]
+then
+    echo "ERREUR: une ou plusieurs des positions ne figurent pas parmis $FICHIER_BD"
+    echo "Nombre total de positions dans $FICHIER_BD: $nbr_lignes"
+    exit 8
+fi
+
+#Si l'option -a est activee, affiche toutes les coordonnees des points 
+if [ $OPT_A == "VRAI" ]
+then
+    gawk -v p1=${POS1} -v p2=${POS2} '$1 >= p1 && ($1 <= p2)    { print("p"$1": latitude = "$2", longitude = "$3", elevation = "$4)}' $FICHIER_BDD     
+fi
+
+# Calcul du temps, distance et vitesse moyenne via l'option -c
+# Dans le cas ou l'option -p existe, le calcul doit se faire pour tous les points entre
+# les deux positions donnees
+if [ $OPT_C == "VRAI" ] 
+then
+    # la distance est la somme des distances des points entre les deux positions donnees
+    if [ $C_DISTANCE == "VRAI" ]; then        
+        gawk -v p1=${POS1} -v p2=${POS2} '
+        BEGIN  { compteur = p1; } 
+        
+               { # Mémoriser les latitudes et longitudes des points dans un tableau                 
+                 if ($1 == compteur && compteur <= p2) {
+                     lat[compteur] = $2; lon[compteur] = $3
+                     compteur++
+                 }
+               }        
+
+        END    { # Faire le calcul de la distance des points entre p1 et p2
+                 dist =  0; 
+                 for (i = p1; i < p2; i++) {
+                   dist = dist + calcul_distance(lat[i], lon[i], lat[i+1], lon[i+1]);
+                 }         
+                 printf("La distance entre les points %s et %s est de %.6f Km.\n",p1,p2,dist)  
+               }              
+
+         # Les fonctions de calcul de la distance
+         function toRad(deg) {
+             PI = 3.141592653
+             rad = deg * PI / 180
+             return rad             
+         }      
+              
+         function calcul_distance(lat1, lon1, lat2, lon2) {
+             R = 6373
+             dLon = toRad(lon2 - lon1)
+             dLat = toRad(lat2 - lat1)
+             lat1 = toRad(lat1)
+             lat2 = toRad(lat2)
+             a = sin(dLat/2) * sin(dLat/2) + cos(lat1)* cos(lat2) * sin(dLon/2) * sin(dLon/2)
+             c = 2 * atan2(sqrt(a), sqrt(1-a))
+             d = R * c
+             return d
+         }       
+             
+         ' $FICHIER_BDD
+	
+    # calcul du temps ecoule en secondes dans le trajet entre les deux positions donnees
+    elif [ $C_TIME == "VRAI" ]; then   	
+        gawk -v p1=${POS1} -v p2=${POS2} '      
+                                 
+        $1 == p1 {
+                     temps1 = $5
+                     gsub("-", " ", temps1); gsub(":"," ",temps1); gsub("[Tt]"," ",temps1); gsub("[Zz]","",temps1)
+                     temps1sec = mktime(temps1)
+                 }
+        $1 == p2 {
+                     temps2 = $5
+                     gsub("-", " ", temps2); gsub(":"," ",temps2); gsub("[Tt]"," ",temps2); gsub("[Zz]","",temps2)
+                     temps2sec = mktime(temps2)
+                 }                 
+
+        END      {               
+                     duree = (temps2sec - temps1sec)/3600
+                     printf("Le trajet entre les points %s et %s a une duree de %.6f h.\n",p1,p2,duree)  
+                 } 
+        ' $FICHIER_BDD    
+
+    # calcul de la vitesse moyenne de tous les points entre les deux positions donnees
+    # la vitesse moyenne est la somme des vitesse (delta(distance)/(t2-t1)
+    elif [ $C_SPEED == "VRAI" ]; then 
+        gawk -v p1=${POS1} -v p2=${POS2} '      
+        BEGIN    { compteurDistance = p1 } 
+                   
+                 # Mémoriser les latitudes et longitudes dans un tableau                 
+        $1 == compteurDistance && compteurDistance <= p2 {
+                     lat[compteurDistance] = $2; lon[compteurDistance] = $3
+                     compteurDistance++
+                 }
+
+        $1 == p1 {
+                     temps1 = $5
+                     gsub("-", " ", temps1); gsub(":"," ",temps1); gsub("T"," ",temps1); gsub("Z","",temps1)
+                     temps1sec = mktime(temps1)
+                 }
+        $1 == p2 {
+                     temps2 = $5
+                     gsub("-", " ", temps2); gsub(":"," ",temps2); gsub("T"," ",temps2); gsub("Z","",temps2)
+                     temps2sec = mktime(temps2)
+                 }      
+
+        END      {        
+                     somme_delta_d = 0; 
+                     duree = temps2sec - temps1sec    
+                     for (i = p1; i < p2; i++) {
+                         delta_d[i] = calcul_distance(lat[i], lon[i], lat[i+1], lon[i+1])
+                         somme_delta_d = somme_delta_d + delta_d[i]
+                     }  
+                     vitesse_moy_sec = somme_delta_d / duree
+                     vitesse_moyenne_h = vitesse_moy_sec * 3600
+                     printf("La vitesse moyenne entre les points %s et %s est de %.6f km/h.\n",p1,p2,vitesse_moyenne_h) 
+                 } 
+
+         # Les fonctions de calcul de la distance
+         function toRad(deg) {
+             PI = 3.141592653
+             rad = deg * PI / 180
+             return rad             
+         }      
+              
+         function calcul_distance(lat1, lon1, lat2, lon2) {
+             d = 0
+             if(lat1 == lat2 && lon1 == lon2) {
+                 d = 0   
+             }
+             else {
+                 R = 6373
+                 dLon = toRad(lon2 - lon1)
+                 dLat = toRad(lat2 - lat1)
+                 lat1 = toRad(lat1)
+                 lat2 = toRad(lat2)
+                 a = sin(dLat/2) * sin(dLat/2) + cos(lat1)* cos(lat2) * sin(dLon/2) * sin(dLon/2)
+                 c = 2 * atan2(sqrt(a), sqrt(1-a))
+                 d = R * c
+             }
+             return d
+         }
+
+        ' $FICHIER_BDD     	
+    fi
+fi
+
+if [ $OPT_E == "VRAI" ]
+then
+    gawk -v p1=${POS1} -v p2=${POS2} '
+
+        BEGIN                     { min = "VOID"; max = "VOID" } 
+
+        $1 >= p1 && ($1 <= p2)    { if (max == "VOID"){max = $4}
+                                    if (min == "VOID"){min = $4}
+                                    if ($4 > max){max = $4}
+                                    if ($4 < min){min = $4}
+                                  }
+                          
+        END                       { print "Les elevations minimal et maximal entre les points "p1" et "p2" sont de minimum "min" m et maximum "max" m." }
+       
+             
+        ' $FICHIER_BDD      
+fi
+
+
+
+
+
+
+
+
+

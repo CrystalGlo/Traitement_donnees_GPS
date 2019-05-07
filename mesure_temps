@@ -1,0 +1,19 @@
+#!/bin/bash
+#
+#HOUIMLI SAFA 	
+#
+#
+
+PROG=$@
+REPETITIONS=10
+echo "Lancement de mesures de temps pour 10 iterations de $PROG en date du `date +%x` a `date +%X`" >> TEMPS
+DEBUT=`date +%s%N`
+for ((i = 0; i < $REPETITIONS; i++)); do
+    $PROG
+done
+FIN=`date +%s%N`
+gawk -v FIN=${FIN} -v DEBUT=${DEBUT} -v ITER=${REPETITIONS} 'BEGIN  { RESULT = ( FIN - DEBUT ) / 1000000000
+                                               printf("Le temps ecoule pour effectuer %s iterations du programme est %s secondes.\n\n",ITER,RESULT) >> "TEMPS" 
+                                               exit
+                                             }'
+echo "FIN DES MESURES"
